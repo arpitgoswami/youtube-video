@@ -9,3 +9,4 @@ gTTS
 asyncio
 aiofiles
 python-dotenv
+mangum
