@@ -1,26 +1,21 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile
 from pydantic import BaseModel
 from typing import List
 import uuid
 from pathlib import Path
 import asyncio
 import tempfile
+from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip, vfx
 from config import config
 from image_generator import generate_image
 from tts_generator import generate_speech
-from video_assembler import assemble_video, add_background_music
+from video_assembler import assemble_video
 
 app = FastAPI(title="Story Video Creator API")
 
 class Scene(BaseModel):
     prompt: str
     narration: str
-
-class BackgroundMusicRequest(BaseModel):
-    video_path: str
-    music_path: str
-    volume: float = 0.1  # default volume 10%
-    output_path: str = "output_with_music.mp4"  # default output filename
 
 class StoryRequest(BaseModel):
     story_scenes: List[Scene]
@@ -29,6 +24,14 @@ class StoryResponse(BaseModel):
     message: str
     video_path: str
     total_scenes: int
+
+class BackgroundMusicRequest(BaseModel):
+    video_path: str
+    background_music_path: str
+
+class BackgroundMusicResponse(BaseModel):
+    message: str
+    output_path: str
 
 # Create temporary directory for each request
 def create_temp_dir():
@@ -95,30 +98,66 @@ async def generate_video(request: StoryRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/add-background-music/", response_model=StoryResponse)
+@app.post("/add-background-music/", response_model=BackgroundMusicResponse)
 async def add_background_music(request: BackgroundMusicRequest):
     try:
-        # Validate input files exist
+        # Create temporary directory
+        tmp_dir = create_temp_dir()
+        output_path = tmp_dir / "output_video.mp4"
+
+        # Verify input files exist
         if not Path(request.video_path).exists():
             raise HTTPException(status_code=400, detail="Video file not found")
-        if not Path(request.music_path).exists():
-            raise HTTPException(status_code=400, detail="Music file not found")
-            
-        # Add background music using positional arguments
-        output_path = await asyncio.to_thread(
-            add_background_music,
-            request.video_path,
-            request.music_path,
-            request.output_path,
-            request.volume  # passing as positional argument
-        )
-        
-        return StoryResponse(
+        if not Path(request.background_music_path).exists():
+            raise HTTPException(status_code=400, detail="Background music file not found")
+
+        # Process video with background music
+        video_clip = VideoFileClip(request.video_path)
+        audio_clip = AudioFileClip(request.background_music_path)
+
+        # Match background audio duration to video duration
+        video_duration = video_clip.duration
+        audio_duration = audio_clip.duration
+
+        if audio_duration < video_duration:
+            processed_audio_clip = audio_clip.fx(vfx.loop, duration=video_duration)
+        elif audio_duration > video_duration:
+            processed_audio_clip = audio_clip.subclip(0, video_duration)
+        else:
+            processed_audio_clip = audio_clip
+
+        # Adjust background music volume to 20%
+        processed_audio_clip = processed_audio_clip.volumex(0.20)
+
+        # Get original audio from video and combine with background
+        original_video_audio = video_clip.audio
+        if original_video_audio is not None:
+            if original_video_audio.duration > processed_audio_clip.duration:
+                processed_audio_clip = processed_audio_clip.fx(vfx.loop, duration=original_video_audio.duration)
+            elif processed_audio_clip.duration > original_video_audio.duration:
+                original_video_audio = original_video_audio.subclip(0, processed_audio_clip.duration)
+            final_audio_clip = CompositeAudioClip([original_video_audio, processed_audio_clip])
+        else:
+            final_audio_clip = processed_audio_clip
+
+        # Set final audio to video and export
+        final_video_clip = video_clip.set_audio(final_audio_clip)
+        final_video_clip.write_videofile(str(output_path), codec='libx264', audio_codec='aac')
+
+        # Clean up
+        video_clip.close()
+        audio_clip.close()
+        if original_video_audio is not None:
+            original_video_audio.close()
+        processed_audio_clip.close()
+        final_audio_clip.close()
+        final_video_clip.close()
+
+        return BackgroundMusicResponse(
             message="Background music added successfully",
-            video_path=output_path,
-            total_scenes=1  # Just one video processed
+            output_path=str(output_path)
         )
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
