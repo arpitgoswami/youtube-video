@@ -10,7 +10,6 @@ import time
 def tts_gtts(text: str, filename: Path, lang: str = "en") -> Path:
     """Generate TTS using gTTS."""
     # Add delay before TTS generation to prevent rate limiting
-    time.sleep(5)
     tts = gTTS(text=text, lang=lang)
     tts.save(str(filename))
     return filename

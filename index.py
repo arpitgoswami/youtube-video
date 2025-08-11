@@ -80,7 +80,8 @@ async def generate_video(request: StoryRequest):
             })
         
         # Assemble final video
-        output_path = "story_video.mp4"
+        # Use absolute path in project directory for output
+        output_path = str(Path.cwd() / config["output_file"])
         await asyncio.to_thread(
             assemble_video,
             scene_files,
@@ -103,7 +104,8 @@ async def add_background_music(request: BackgroundMusicRequest):
     try:
         # Create temporary directory
         tmp_dir = create_temp_dir()
-        output_path = tmp_dir / "output_video.mp4"
+        # Use project directory for output
+        output_path = Path.cwd() / "output_video.mp4"
 
         # Verify input files exist
         if not Path(request.video_path).exists():
